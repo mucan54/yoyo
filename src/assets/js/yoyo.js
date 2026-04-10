@@ -29,6 +29,42 @@
 					callback(event.detail)
 				})
 			},
+			dispatch(eventName, params = {}) {
+				if (Array.isArray(eventName)) {
+					params = eventName[1] || {}
+					eventName = eventName[0]
+				}
+				yoyoEventCache.clear()
+				let elements = getAllcomponents()
+				elements.forEach((elt) => {
+					if (shouldTriggerYoyoEvent(elt, eventName)) {
+						addEmittedEventParametersToListenerComponent(
+							getComponent(elt),
+							eventName,
+							params
+						)
+						YoyoEngine.trigger(elt, eventName, params)
+					}
+				})
+			},
+			dispatchTo(componentName, eventName, params = {}) {
+				if (Array.isArray(eventName)) {
+					params = eventName[1] || {}
+					eventName = eventName[0]
+				}
+				yoyoEventCache.clear()
+				let elements = getComponentsByName(componentName)
+				elements.forEach((elt) => {
+					if (shouldTriggerYoyoEvent(elt, eventName)) {
+						addEmittedEventParametersToListenerComponent(
+							getComponent(elt),
+							eventName,
+							params
+						)
+						YoyoEngine.trigger(elt, eventName, params)
+					}
+				})
+			},
 			createNonExistentIdTarget(targetId) {
 				// Dynamically create non-existent target IDs by appending them to document body
 				if (

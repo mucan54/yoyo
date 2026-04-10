@@ -105,6 +105,13 @@ class ComponentManager
 
         $eventParams = $this->request->get('eventParams', []);
 
+        // Handle edge case where test_json returns raw string for empty JSON arrays/objects
+        // (e.g. '[]' or '{}') because decoded empty arrays are falsy in PHP
+        if (is_string($eventParams)) {
+            $decoded = json_decode($eventParams, true);
+            $eventParams = is_array($decoded) ? $decoded : [];
+        }
+
         $this->component->spinning($this->spinning)->boot($variables, $attributes);
 
         $hookStack = [
@@ -157,60 +164,65 @@ class ComponentManager
         if (! in_array($action, ['render', 'refresh'])) {
             $parameters = $isEventListenerAction ? $eventParams : $this->parseActionArguments();
 
-            // Get parameter information with types
-            $paramInfo = ClassHelpers::getMethodParametersWithTypes($this->component, $action);
-            $regularParams = $paramInfo['regular'];
-            $typedParams = $paramInfo['typed'];
-
-            // Extract just the names of regular parameters for backwards compatibility
-            $parameterNames = array_column($regularParams, 'name');
-
-            // Check if the last regular parameter is variadic
-            $hasVariadic = ! empty($regularParams) && end($regularParams)['variadic'];
-
-            // Handle variadic parameters
-            if ($hasVariadic && count($parameterNames) > 0) {
-                $regularParamCount = count($parameterNames) - 1; // Exclude the variadic parameter
-
-                if (count($parameters) >= $regularParamCount) {
-                    // Split parameters into regular and variadic
-                    $regularParamValues = array_slice($parameters, 0, $regularParamCount);
-                    $variadicParamValues = array_slice($parameters, $regularParamCount);
-
-                    // Create args array with named regular parameters and indexed variadic parameters
-                    $args = [];
-                    for ($i = 0; $i < $regularParamCount; $i++) {
-                        $args[$parameterNames[$i]] = $regularParamValues[$i] ?? null;
-                    }
-
-                    // Add variadic parameters as indexed values (not named)
-                    foreach ($variadicParamValues as $value) {
-                        $args[] = $value;
-                    }
-                } else {
-                    throw new \InvalidArgumentException("Too few parameters passed to [{$this->name}::{$action}]");
-                }
+            // When event parameters come as an associative array (e.g. from JS Yoyo.dispatch),
+            // pass them directly as named args - the container handles name-based matching
+            if ($isEventListenerAction && is_array($parameters) && ! empty($parameters) && ! self::isSequentialArray($parameters)) {
+                $args = $parameters;
             } else {
-                // Check if all regular parameters are optional
-                $requiredCount = 0;
-                foreach ($regularParams as $param) {
-                    if (! $param['optional']) {
-                        $requiredCount++;
-                    }
-                }
+                // Get parameter information with types
+                $paramInfo = ClassHelpers::getMethodParametersWithTypes($this->component, $action);
+                $regularParams = $paramInfo['regular'];
 
-                // Only validate regular parameters (not typed/DI parameters)
-                if (count($parameters) >= $requiredCount && count($parameters) <= count($parameterNames)) {
-                    // Parameters count is valid (between required and total)
-                    $args = [];
-                    for ($i = 0; $i < count($parameterNames); $i++) {
-                        $args[$parameterNames[$i]] = $parameters[$i] ?? null;
+                // Extract just the names of regular parameters for backwards compatibility
+                $parameterNames = array_column($regularParams, 'name');
+
+                // Check if the last regular parameter is variadic
+                $hasVariadic = ! empty($regularParams) && end($regularParams)['variadic'];
+
+                // Handle variadic parameters
+                if ($hasVariadic && count($parameterNames) > 0) {
+                    $regularParamCount = count($parameterNames) - 1; // Exclude the variadic parameter
+
+                    if (count($parameters) >= $regularParamCount) {
+                        // Split parameters into regular and variadic
+                        $regularParamValues = array_slice($parameters, 0, $regularParamCount);
+                        $variadicParamValues = array_slice($parameters, $regularParamCount);
+
+                        // Create args array with named regular parameters and indexed variadic parameters
+                        $args = [];
+                        for ($i = 0; $i < $regularParamCount; $i++) {
+                            $args[$parameterNames[$i]] = $regularParamValues[$i] ?? null;
+                        }
+
+                        // Add variadic parameters as indexed values (not named)
+                        foreach ($variadicParamValues as $value) {
+                            $args[] = $value;
+                        }
+                    } else {
+                        throw new \InvalidArgumentException("Too few parameters passed to [{$this->name}::{$action}]");
                     }
-                } elseif (empty($parameterNames) && empty($parameters)) {
-                    // Method has only typed parameters (or no parameters at all)
-                    $args = [];
                 } else {
-                    throw new \InvalidArgumentException("Incorrect number of parameters passed to [{$this->name}::{$action}]");
+                    // Check if all regular parameters are optional
+                    $requiredCount = 0;
+                    foreach ($regularParams as $param) {
+                        if (! $param['optional']) {
+                            $requiredCount++;
+                        }
+                    }
+
+                    // Only validate regular parameters (not typed/DI parameters)
+                    if (count($parameters) >= $requiredCount && count($parameters) <= count($parameterNames)) {
+                        // Parameters count is valid (between required and total)
+                        $args = [];
+                        for ($i = 0; $i < count($parameterNames); $i++) {
+                            $args[$parameterNames[$i]] = $parameters[$i] ?? null;
+                        }
+                    } elseif (empty($parameterNames) && empty($parameters)) {
+                        // Method has only typed parameters (or no parameters at all)
+                        $args = [];
+                    } else {
+                        throw new \InvalidArgumentException("Incorrect number of parameters passed to [{$this->name}::{$action}]");
+                    }
                 }
             }
 
@@ -269,5 +281,14 @@ class ComponentManager
     public function getComponentInstance()
     {
         return $this->component;
+    }
+
+    private static function isSequentialArray($array): bool
+    {
+        if (! is_array($array) || empty($array)) {
+            return false;
+        }
+
+        return array_keys($array) === range(0, count($array) - 1);
     }
 }
